@@ -1,0 +1,100 @@
+name: slidev-vault
+
+x-app-image: &app-image
+  image: slidev-vault:1.0.0
+  build:
+    context: .
+    dockerfile: Dockerfile
+
+x-runtime-hardening: &runtime-hardening
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  app:
+    <<: [*app-image, *runtime-hardening]
+    command: ["node", ".output/server/index.mjs"]
+    environment:
+      NODE_ENV: production
+      NITRO_HOST: 0.0.0.0
+      NITRO_PORT: 3000
+      NUXT_DATA_DIR: /data
+      NUXT_BUILD_EXCHANGE_DIR: /exchange
+      NUXT_ADMIN_HOST: ${ADMIN_DOMAIN:?set ADMIN_DOMAIN in .env}
+      NUXT_SLIDES_HOST: ${SLIDES_DOMAIN:?set SLIDES_DOMAIN in .env}
+      NUXT_PUBLIC_ADMIN_ORIGIN: https://${ADMIN_DOMAIN}
+      NUXT_PUBLIC_SLIDES_ORIGIN: https://${SLIDES_DOMAIN}
+      NUXT_COOKIE_SECURE: "true"
+      NUXT_INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?set INITIAL_ADMIN_PASSWORD in .env}
+      NUXT_INITIAL_VIEWER_PASSWORD: ${INITIAL_VIEWER_PASSWORD:?set INITIAL_VIEWER_PASSWORD in .env}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
+      MAX_EXTRACTED_BYTES: ${MAX_EXTRACTED_BYTES:-104857600}
+      MAX_ARCHIVE_FILES: ${MAX_ARCHIVE_FILES:-500}
+    volumes:
+      - app_data:/data
+      - build_exchange:/exchange
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 160
+
+  worker:
+    <<: [*app-image, *runtime-hardening]
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "worker/index.ts"]
+    environment:
+      NODE_ENV: production
+      BUILD_EXCHANGE_DIR: /exchange
+      PNPM_STORE_DIR: /pnpm-store
+      BUILD_TIMEOUT_MS: ${BUILD_TIMEOUT_MS:-300000}
+    volumes:
+      - build_exchange:/exchange
+      - pnpm_store:/pnpm-store
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
+      SLIDES_DOMAIN: ${SLIDES_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 128
+
+volumes:
+  app_data:
+  build_exchange:
+  pnpm_store:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,12 @@
+.nuxt/
+.output/
+node_modules/
+.env
+data/
+backups/
+coverage/
+playwright-report/
+test-results/
+*.log
+.DS_Store
+Thumbs.db
